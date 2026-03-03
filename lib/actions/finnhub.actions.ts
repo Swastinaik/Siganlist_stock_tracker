@@ -2,7 +2,7 @@
 
 import { getDateRange, validateArticle, formatArticle } from '@/lib/utils';
 import { POPULAR_STOCK_SYMBOLS } from '@/lib/constants';
-import { cache } from 'react';
+import { isSymbolInWatchlist } from '@/lib/actions/watchlist.actions';
 
 const FINNHUB_BASE_URL = 'https://finnhub.io/api/v1';
 const NEXT_PUBLIC_FINNHUB_API_KEY = process.env.NEXT_PUBLIC_FINNHUB_API_KEY ?? '';
@@ -98,7 +98,7 @@ export async function getNews(symbols?: string[]): Promise<MarketNewsArticle[]> 
   }
 }
 
-export const searchStocks = cache(async (query?: string): Promise<StockWithWatchlistStatus[]> => {
+export async function searchStocks(query?: string): Promise<StockWithWatchlistStatus[]> {
   try {
     const token = process.env.FINNHUB_API_KEY ?? NEXT_PUBLIC_FINNHUB_API_KEY;
     if (!token) {
@@ -153,7 +153,8 @@ export const searchStocks = cache(async (query?: string): Promise<StockWithWatch
       results = Array.isArray(data?.result) ? data.result : [];
     }
 
-    const mapped: StockWithWatchlistStatus[] = results
+    const baseItems = results
+      .slice(0, 15)
       .map((r) => {
         const upper = (r.symbol || '').toUpperCase();
         const name = r.description || upper;
@@ -161,21 +162,23 @@ export const searchStocks = cache(async (query?: string): Promise<StockWithWatch
         const exchangeFromProfile = (r as any).__exchange as string | undefined;
         const exchange = exchangeFromDisplay || exchangeFromProfile || 'US';
         const type = r.type || 'Stock';
-        const item: StockWithWatchlistStatus = {
-          symbol: upper,
-          name,
-          exchange,
-          type,
-          isInWatchlist: false,
-        };
-        return item;
-      })
-      .slice(0, 15);
+        return { symbol: upper, name, exchange, type };
+      });
+
+    // Resolve watchlist status for all symbols in parallel
+    const watchlistFlags = await Promise.all(
+      baseItems.map((item) => isSymbolInWatchlist(item.symbol))
+    );
+
+    const mapped: StockWithWatchlistStatus[] = baseItems.map((item, i) => ({
+      ...item,
+      isInWatchlist: watchlistFlags[i],
+    }));
 
     return mapped;
   } catch (err) {
     console.error('Error in stock search:', err);
     return [];
   }
-});
+}
 

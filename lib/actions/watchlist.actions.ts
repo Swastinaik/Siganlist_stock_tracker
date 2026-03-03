@@ -2,7 +2,8 @@
 
 import { connectToDatabase } from '@/database/mongoose';
 import { Watchlist } from '@/database/models/watchlist.model';
-
+import { auth } from "@/lib/better-auth/auth";
+import { headers } from "next/headers";
 export async function getWatchlistSymbolsByEmail(email: string): Promise<string[]> {
   if (!email) return [];
 
@@ -24,5 +25,52 @@ export async function getWatchlistSymbolsByEmail(email: string): Promise<string[
   } catch (err) {
     console.error('getWatchlistSymbolsByEmail error:', err);
     return [];
+  }
+}
+
+
+export async function isSymbolInWatchlist(symbol: string): Promise<boolean> {
+  try {
+    const mongoose = await connectToDatabase();
+    const db = mongoose.connection.db;
+    if (!db) return false;
+
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) return false;
+
+    const userId = session.user.id;
+    const existing = await Watchlist.findOne({ userId, symbol: symbol.toUpperCase() }).lean();
+    return !!existing;
+  } catch (err) {
+    console.error('isSymbolInWatchlist error:', err);
+    return false;
+  }
+}
+
+export async function addSymbolToWatchlist(symbol: string) {
+  try {
+    const mongoose = await connectToDatabase();
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('MongoDB connection not found');
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) throw new Error('User not found');
+    const userId = session.user.id;
+    await Watchlist.create({ userId, symbol });
+  } catch (err) {
+    console.error('addSymbolToWatchlist error:', err);
+  }
+}
+
+export async function removeSymbolFromWatchlist(symbol: string) {
+  try {
+    const mongoose = await connectToDatabase();
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('MongoDB connection not found');
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) throw new Error('User not found');
+    const userId = session.user.id;
+    await Watchlist.deleteOne({ userId, symbol: symbol.toUpperCase() });
+  } catch (err) {
+    console.error('removeSymbolFromWatchlist error:', err);
   }
 }

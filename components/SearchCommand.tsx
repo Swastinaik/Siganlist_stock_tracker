@@ -2,17 +2,20 @@
 
 import { useEffect, useState } from "react"
 import { CommandDialog, CommandEmpty, CommandInput, CommandList } from "@/components/ui/command"
-import {Button} from "@/components/ui/button";
-import {Loader2,  TrendingUp} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Star } from "lucide-react";
+import { Loader2, TrendingUp } from "lucide-react";
 import Link from "next/link";
-import {searchStocks} from "@/lib/actions/finnhub.actions";
-import {useDebounce} from "@/hooks/useDebounce";
+import { searchStocks } from "@/lib/actions/finnhub.actions";
+import { useDebounce } from "@/hooks/useDebounce";
+import { addSymbolToWatchlist, removeSymbolFromWatchlist } from "@/lib/actions/watchlist.actions";
 
 export default function SearchCommand({ renderAs = 'button', label = 'Add stock', initialStocks }: SearchCommandProps) {
   const [open, setOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [loading, setLoading] = useState(false)
   const [stocks, setStocks] = useState<StockWithWatchlistStatus[]>(initialStocks);
+  const [toggling, setToggling] = useState<Set<string>>(new Set());
 
   const isSearchMode = !!searchTerm.trim();
   const displayStocks = isSearchMode ? stocks : stocks?.slice(0, 10);
@@ -29,12 +32,11 @@ export default function SearchCommand({ renderAs = 'button', label = 'Add stock'
   }, [])
 
   const handleSearch = async () => {
-    if(!isSearchMode) return setStocks(initialStocks);
-
+    if (!isSearchMode) return setStocks(initialStocks);
     setLoading(true)
     try {
-        const results = await searchStocks(searchTerm.trim());
-        setStocks(results);
+      const results = await searchStocks(searchTerm.trim());
+      setStocks(results);
     } catch {
       setStocks([])
     } finally {
@@ -54,16 +56,47 @@ export default function SearchCommand({ renderAs = 'button', label = 'Add stock'
     setStocks(initialStocks);
   }
 
+  const handleWatchlistToggle = async (e: React.MouseEvent, symbol: string, isInWatchlist: boolean) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (toggling.has(symbol)) return;
+
+    // Optimistic update — flip immediately for snappy UX
+    setStocks(prev =>
+      prev.map(s => s.symbol === symbol ? { ...s, isInWatchlist: !isInWatchlist } : s)
+    );
+    setToggling(prev => new Set(prev).add(symbol));
+
+    try {
+      if (isInWatchlist) {
+        await removeSymbolFromWatchlist(symbol);
+      } else {
+        await addSymbolToWatchlist(symbol);
+      }
+    } catch {
+      // Revert optimistic update on failure
+      setStocks(prev =>
+        prev.map(s => s.symbol === symbol ? { ...s, isInWatchlist } : s)
+      );
+    } finally {
+      setToggling(prev => {
+        const next = new Set(prev);
+        next.delete(symbol);
+        return next;
+      });
+    }
+  }
+
   return (
     <>
       {renderAs === 'text' ? (
-          <span onClick={() => setOpen(true)} className="search-text">
-            {label}
-          </span>
-      ): (
-          <Button onClick={() => setOpen(true)} className="search-btn">
-            {label}
-          </Button>
+        <span onClick={() => setOpen(true)} className="search-text">
+          {label}
+        </span>
+      ) : (
+        <Button onClick={() => setOpen(true)} className="search-btn">
+          {label}
+        </Button>
       )}
       <CommandDialog open={open} onOpenChange={setOpen} className="search-dialog">
         <div className="search-field">
@@ -72,40 +105,55 @@ export default function SearchCommand({ renderAs = 'button', label = 'Add stock'
         </div>
         <CommandList className="search-list">
           {loading ? (
-              <CommandEmpty className="search-list-empty">Loading stocks...</CommandEmpty>
+            <CommandEmpty className="search-list-empty">Loading stocks...</CommandEmpty>
           ) : displayStocks?.length === 0 ? (
-              <div className="search-list-indicator">
-                {isSearchMode ? 'No results found' : 'No stocks available'}
-              </div>
-            ) : (
+            <div className="search-list-indicator">
+              {isSearchMode ? 'No results found' : 'No stocks available'}
+            </div>
+          ) : (
             <ul>
               <div className="search-count">
                 {isSearchMode ? 'Search results' : 'Popular stocks'}
                 {` `}({displayStocks?.length || 0})
               </div>
-              {displayStocks?.map((stock, i) => (
-                  <li key={stock.symbol} className="search-item">
-                    <Link
-                        href={`/stocks/${stock.symbol}`}
-                        onClick={handleSelectStock}
-                        className="search-item-link"
-                    >
-                      <TrendingUp className="h-4 w-4 text-gray-500" />
-                      <div  className="flex-1">
-                        <div className="search-item-name">
-                          {stock.name}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {stock.symbol} | {stock.exchange } | {stock.type}
-                        </div>
+              {displayStocks?.map((stock) => (
+                <li key={stock.symbol} className="search-item flex items-center gap-2">
+                  <Link
+                    href={`/stocks/${stock.symbol}`}
+                    onClick={handleSelectStock}
+                    className="search-item-link flex-1"
+                  >
+                    <TrendingUp className="h-4 w-4 text-gray-500" />
+                    <div className="flex-1">
+                      <div className="search-item-name">
+                        {stock.name}
                       </div>
-                    {/*<Star />*/}
-                    </Link>
-                  </li>
+                      <div className="text-sm text-gray-500">
+                        {stock.symbol} | {stock.exchange} | {stock.type}
+                      </div>
+                    </div>
+                  </Link>
+                  <button
+                    onClick={(e) => handleWatchlistToggle(e, stock.symbol, stock.isInWatchlist)}
+                    disabled={toggling.has(stock.symbol)}
+                    className="search-item-star"
+                    aria-label={stock.isInWatchlist
+                      ? `Remove ${stock.symbol} from watchlist`
+                      : `Add ${stock.symbol} to watchlist`}
+                    title={stock.isInWatchlist ? 'Remove from watchlist' : 'Add to watchlist'}
+                  >
+                    <Star
+                      className={
+                        stock.isInWatchlist
+                          ? "fill-yellow-400 text-yellow-400"
+                          : "text-gray-400"
+                      }
+                    />
+                  </button>
+                </li>
               ))}
             </ul>
-          )
-          }
+          )}
         </CommandList>
       </CommandDialog>
     </>
